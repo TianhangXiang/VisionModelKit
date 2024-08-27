@@ -29,6 +29,8 @@ from datetime import timedelta
 from datetime import datetime
 import json
 from utils.utils import AverageMeter, ProgressMeter, Summary
+from torch.utils.tensorboard import SummaryWriter
+
 
 def accuracy(output, target, topk=(1,)):
     """Computes the accuracy over the k top predictions for the specified values of k"""
@@ -306,12 +308,14 @@ def bulid_logger(base_dir):
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)
 
-    return logger
+    tb_logger = SummaryWriter(log_dir=os.path.join(base_dir))
+
+    return logger, tb_logger
 
 def bulid_evaluator():
     pass
 
-def train(args, model, train_dataloader, val_dataloader, optimizer, scheduler, criterion, save_dir):
+def train(args, model, train_dataloader, val_dataloader, optimizer, scheduler, criterion, save_dir, tb_logger):
     
     for epoch in range(args.start_epoch, args.epochs):
         # train for one epoch
@@ -322,16 +326,20 @@ def train(args, model, train_dataloader, val_dataloader, optimizer, scheduler, c
                                                          criterion=criterion,
                                                          epoch=epoch,
                                                          device=device,
+                                                         tb_logger=tb_logger,
                                                         )
 
         # evaluate on validation set
-        valid_loss, acc1, valid_acc5 = validate(val_dataloader, model, criterion, args)
+        valid_loss, valid_acc1, valid_acc5 = validate(val_dataloader, model, criterion, args)
+        tb_logger.add_scalar('valid_loss', valid_loss.item(), epoch)
+        tb_logger.add_scalar('valid_acc1', valid_acc1, epoch)
+        tb_logger.add_scalar('valid_acc5', valid_acc5, epoch)
 
         scheduler.step()
 
         # remember best acc@1 and save checkpoint
-        is_best = acc1 > best_acc1
-        best_acc1 = max(acc1, best_acc1)
+        is_best = valid_acc1 > best_acc1
+        best_acc1 = max(valid_acc1, best_acc1)
 
         save_checkpoint({
                 'epoch': epoch + 1,
@@ -403,7 +411,7 @@ def validate(val_loader, model, criterion, args):
 
     return losses.avg, top1.avg, top5.avg
 
-def train_epoch(args, model, train_dataloader, optimizer, criterion, device, epoch):
+def train_epoch(args, model, train_dataloader, optimizer, criterion, device, epoch, tb_logger):
     batch_time = AverageMeter('Time', ':6.3f')
     data_time = AverageMeter('Data', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
@@ -421,6 +429,8 @@ def train_epoch(args, model, train_dataloader, optimizer, criterion, device, epo
 
     total_batches = len(train_dataloader) * args.epochs
     completed_batches = len(train_dataloader) * (epoch - 1)
+
+    running_loss = 0.0
 
     for i, (images, target) in enumerate(train_dataloader):
         # measure data loading time
@@ -454,8 +464,11 @@ def train_epoch(args, model, train_dataloader, optimizer, criterion, device, epo
         eta_seconds = batch_time.avg * remaining_batches
         eta_str = str(timedelta(seconds=int(eta_seconds)))
 
+        running_loss += loss.item()
         if i % args.print_freq == 0:
             progress.display(i, eta_str)
+            tb_logger.add_scalar('training loss', running_loss / args.print_freq, epoch * len(train_dataloader) + i)
+            running_loss = 0.0
     
     return losses.avg, top1.avg, top5.avg
     
@@ -567,7 +580,7 @@ if __name__ == "__main__":
 
     exp_base_dir = prepare_path_env(args)
     
-    logger = bulid_logger(exp_base_dir)
+    logger, tb_logger = bulid_logger(exp_base_dir)
 
     logger.info("**************************Start building model*******************************")
     model, model_info = build_model(args)
@@ -606,6 +619,7 @@ if __name__ == "__main__":
           scheduler=scheduler, 
           criterion=criterion,
           save_dir=ckpt_save_dir,
+          tb_logger=tb_logger,
           )
 
     
