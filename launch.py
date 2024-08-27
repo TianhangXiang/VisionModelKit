@@ -344,6 +344,25 @@ def build_scheduler(optimizer, args):
 
     return scheduler, scheduler_info
 
+def build_criterion(args, device):
+
+    # 根据args中的设置选择损失函数
+    if args.criterion == 'cross_entropy':
+        criterion = nn.CrossEntropyLoss()
+    elif args.criterion == 'mse':
+        criterion = nn.MSELoss()
+    elif args.criterion == 'l1':
+        criterion = nn.L1Loss()
+    elif args.criterion == 'bce':
+        criterion = nn.BCELoss()
+    else:
+        raise ValueError(f"unspported loss: {args.criterion}")
+
+    # 将损失函数移动到指定设备上
+    criterion = criterion.to(device)
+
+    return criterion
+
 def bulid_logger(base_dir):
     log_file_path = os.path.join(base_dir, "log.txt")
 
@@ -586,6 +605,7 @@ if __name__ == "__main__":
                         help='seed for initializing training. ')
     # parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
     #                     help='evaluate model on validation set')
+    parser.add_argument('--criterion', default="cross_entropy", type=str,)
     # schduler args
     parser.add_argument('--scheduler', default="steplr", type=str,)
 
@@ -593,6 +613,7 @@ if __name__ == "__main__":
     parser.add_argument('--model',default='resnet')
     parser.add_argument('--pretrained', dest='pretrained', action='store_true',
                         help='use pre-trained model')
+    
     # dataloader args
     parser.add_argument('--dataset_name',default='', help='path to dataset (default: imagenet)')
     parser.add_argument('--data_dir',default='', help='path to dataset (default: imagenet)')
@@ -648,6 +669,10 @@ if __name__ == "__main__":
     logger.info("************************Start building scheduler***********************")
     scheduler, scheduler_info = build_scheduler(optimizer, args)
     logger.info(scheduler_info)
+
+    logger.info("************************Start building criterion***********************")
+    criterion = build_criterion(args, device)
+    logger.info(criterion)
 
     logger.info("================================Begin to Train================================")
     # criterion = nn.CrossEntropyLoss().to(device)
