@@ -27,7 +27,7 @@ import logging
 from torchinfo import summary
 from datetime import timedelta
 from datetime import datetime
-
+import json
 
 class Summary(Enum):
     NONE = 0
@@ -197,6 +197,10 @@ def prepare_path_env(args):
     #     raise ValueError
     _backup_files(os.getcwd(), backup_dir)
 
+    # 备份参数
+    with open(os.path.join(output_dir, 'args.json'), 'w') as json_file:
+        json.dump(vars(args), json_file, indent=4)
+        
     return output_dir
 
 def build_model(args):
@@ -625,24 +629,28 @@ if __name__ == "__main__":
     
     logger = bulid_logger(exp_base_dir)
 
-    print("*************Start building model****************")
+    logger.info("**************************Start building model*******************************")
     model, model_info = build_model(args)
+    logger.info(model_info)
     model.cuda()
 
-    print("*************Start building dataset**************")
+    logger.info("************************Start building dataset*************************")
     train_dataset, val_dataset, collate_fn, dataset_info = build_dataset(args)
+    logger.info(dataset_info)
 
-    print("*************Start building dataloader***********")
+    logger.info("************************Start building dataloader**********************")
     train_dataloader, val_dataloader = build_dataloader(args, train_dataset, val_dataset, collate_fn=collate_fn)
 
-    print("*************Start building optimizer************")
+    logger.info("************************Start building optimizer***********************")
     optimizer, optimizer_info = build_optimizer(model, args)
+    logger.info(optimizer_info)
 
-    print("*************Start building scheduler************")
+    logger.info("************************Start building scheduler***********************")
     scheduler, scheduler_info = build_scheduler(optimizer, args)
+    logger.info(scheduler_info)
 
-    print("================================Begin to Train================================")
-    criterion = nn.CrossEntropyLoss().to(device)
+    logger.info("================================Begin to Train================================")
+    # criterion = nn.CrossEntropyLoss().to(device)
 
     train(
           args=args, 
