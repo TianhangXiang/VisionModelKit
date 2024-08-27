@@ -28,92 +28,7 @@ from torchinfo import summary
 from datetime import timedelta
 from datetime import datetime
 import json
-
-class Summary(Enum):
-    NONE = 0
-    AVERAGE = 1
-    SUM = 2
-    COUNT = 3
-
-class AverageMeter(object):
-    """Computes and stores the average and current value"""
-    def __init__(self, name, fmt=':f', summary_type=Summary.AVERAGE):
-        self.name = name
-        self.fmt = fmt
-        self.summary_type = summary_type
-        self.reset()
-
-    def reset(self):
-        self.val = 0
-        self.avg = 0
-        self.sum = 0
-        self.count = 0
-
-    def update(self, val, n=1):
-        self.val = val
-        self.sum += val * n
-        self.count += n
-        self.avg = self.sum / self.count
-
-    def all_reduce(self):
-        if torch.cuda.is_available():
-            device = torch.device("cuda")
-        # elif torch.backends.mps.is_available():
-        #     device = torch.device("mps")
-        else:
-            device = torch.device("cpu")
-        total = torch.tensor([self.sum, self.count], dtype=torch.float32, device=device)
-        dist.all_reduce(total, dist.ReduceOp.SUM, async_op=False)
-        self.sum, self.count = total.tolist()
-        self.avg = self.sum / self.count
-
-    def __str__(self):
-        fmtstr = '{name} {val' + self.fmt + '} ({avg' + self.fmt + '})'
-        return fmtstr.format(**self.__dict__)
-    
-    def summary(self):
-        fmtstr = ''
-        if self.summary_type is Summary.NONE:
-            fmtstr = ''
-        elif self.summary_type is Summary.AVERAGE:
-            fmtstr = '{name} {avg:.3f}'
-        elif self.summary_type is Summary.SUM:
-            fmtstr = '{name} {sum:.3f}'
-        elif self.summary_type is Summary.COUNT:
-            fmtstr = '{name} {count:.3f}'
-        else:
-            raise ValueError('invalid summary type %r' % self.summary_type)
-        
-        return fmtstr.format(**self.__dict__)
-
-
-class ProgressMeter(object):
-    def __init__(self, num_batches, meters, prefix=""):
-        self.batch_fmtstr = self._get_batch_fmtstr(num_batches)
-        self.meters = meters
-        self.prefix = prefix
-
-    def display(self, batch, eta_str=None):
-        entries = [self.prefix + self.batch_fmtstr.format(batch)]
-        entries += [str(meter) for meter in self.meters]
-        if eta_str is not None:
-            entries.append(f"ETA {eta_str}")
-        print('\t'.join(entries))
-
-    def _get_batch_fmtstr(self, num_batches):
-        num_digits = len(str(num_batches))
-        fmt = '{:' + str(num_digits) + 'd}'
-        return '[' + fmt + '/' + fmt.format(num_batches) + ']'
-        
-    def display_summary(self):
-        entries = [" *"]
-        entries += [meter.summary() for meter in self.meters]
-        print(' '.join(entries))
-
-    def _get_batch_fmtstr(self, num_batches):
-        num_digits = len(str(num_batches // 1))
-        fmt = '{:' + str(num_digits) + 'd}'
-        return '[' + fmt + '/' + fmt.format(num_batches) + ']'
+from utils.utils import AverageMeter, ProgressMeter, Summary
 
 def accuracy(output, target, topk=(1,)):
     """Computes the accuracy over the k top predictions for the specified values of k"""
@@ -179,12 +94,16 @@ def prepare_path_env(args):
     model_name = args.model
     dataset_name = args.dataset_name
     prefix = args.prefix
+    extra_note = args.extra_note
 
     # 获取当前时间戳
     timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
 
     # 组合文件夹路径
-    output_dir = os.path.join("exp", f"{prefix}_{dataset_name}_{model_name}_{timestamp}")
+    if prefix != "":
+        output_dir = os.path.join("exp", f"{prefix}_{dataset_name}_{model_name}_{timestamp}_{extra_note}")
+    else:
+        output_dir = os.path.join("exp", f"{dataset_name}_{model_name}_{timestamp}_{extra_note}")
 
     # 创建文件夹
     os.makedirs(output_dir, exist_ok=True)
@@ -367,7 +286,7 @@ def bulid_logger(base_dir):
     log_file_path = os.path.join(base_dir, "log.txt")
 
     # 创建一个 logger 对象
-    logger = logging.getLogger(__name__)
+    logger = logging.getLogger()
     logger.setLevel(logging.INFO)  # 设置最低日志级别
 
     # 创建一个文件处理器，用于将日志写入文件
@@ -392,7 +311,7 @@ def bulid_logger(base_dir):
 def bulid_evaluator():
     pass
 
-def train(args, model, train_dataloader, val_dataloader, optimizer, scheduler, criterion):
+def train(args, model, train_dataloader, val_dataloader, optimizer, scheduler, criterion, save_dir):
     
     for epoch in range(args.start_epoch, args.epochs):
         # train for one epoch
@@ -421,7 +340,7 @@ def train(args, model, train_dataloader, val_dataloader, optimizer, scheduler, c
                 'best_acc1': best_acc1,
                 'optimizer' : optimizer.state_dict(),
                 'scheduler' : scheduler.state_dict()
-            }, is_best, save_dir=args.output_dir)
+            }, is_best, save_dir=save_dir)
 
 def validate(val_loader, model, criterion, args):
 
@@ -537,7 +456,6 @@ def train_epoch(args, model, train_dataloader, optimizer, criterion, device, epo
 
         if i % args.print_freq == 0:
             progress.display(i, eta_str)
-            print(f"ETA: {eta_str}")
     
     return losses.avg, top1.avg, top5.avg
     
@@ -635,6 +553,7 @@ if __name__ == "__main__":
                         help='path to latest checkpoint (default: none)')
     parser.add_argument('--output_dir', type=str, default='output', help="output dir")
     parser.add_argument('--prefix', type=str, default='', help="output dir")
+    parser.add_argument('--extra_note', type=str, default='default', help="")
 
     args = parser.parse_args()
 
@@ -676,6 +595,7 @@ if __name__ == "__main__":
 
     logger.info("================================Begin to Train================================")
     # criterion = nn.CrossEntropyLoss().to(device)
+    ckpt_save_dir = os.path.join(exp_base_dir, "ckpt")
 
     train(
           args=args, 
@@ -685,6 +605,7 @@ if __name__ == "__main__":
           optimizer=optimizer, 
           scheduler=scheduler, 
           criterion=criterion,
+          save_dir=ckpt_save_dir,
           )
 
     
