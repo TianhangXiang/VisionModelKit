@@ -148,24 +148,56 @@ def prepare_seed_env(args):
                       'from checkpoints.')
     return args
 
+def _backup_files(source_dir, backup_dir, exclude_dirs=['exp', 'temp', 'output']):
+    if exclude_dirs is None:
+        exclude_dirs = []
+
+    # 遍历当前目录及其子目录
+    for root, dirs, files in os.walk(source_dir):
+        # 检查当前目录是否在排除列表中
+        if any(excluded in root for excluded in exclude_dirs):
+            continue
+        
+        for file in files:
+            if file.endswith('.py'):
+                # 构建源文件的完整路径
+                source_file_path = os.path.join(root, file)
+                
+                # 构建目标文件的完整路径
+                relative_path = os.path.relpath(root, source_dir)
+                target_dir = os.path.join(backup_dir, relative_path)
+                target_file_path = os.path.join(target_dir, file)
+                
+                # 创建目标目录（如果不存在）
+                os.makedirs(target_dir, exist_ok=True)
+                
+                # 复制文件
+                shutil.copy2(source_file_path, target_file_path)
+            
 def prepare_path_env(args):
     # 获取模型名称和数据集名称
-    model_name = args.model_name
+    model_name = args.model
     dataset_name = args.dataset_name
+    prefix = args.prefix
 
     # 获取当前时间戳
     timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
 
     # 组合文件夹路径
-    output_dir = os.path.join("exp", f"{dataset_name}_{model_name}_{timestamp}")
+    output_dir = os.path.join("exp", f"{prefix}_{dataset_name}_{model_name}_{timestamp}")
 
     # 创建文件夹
     os.makedirs(output_dir, exist_ok=True)
 
-    return output_dir
+    # 备份文件
+    backup_dir = os.path.join(output_dir, "backup")
+    os.makedirs(backup_dir, exist_ok=True)
 
-def backup_files(args):
-    pass
+    # if os.path.dirname(os.path.dirname(backup_dir)) != os.getcwd():
+    #     raise ValueError
+    _backup_files(os.getcwd(), backup_dir)
+
+    return output_dir
 
 def build_model(args):
     model = models.__dict__[args.model]()
@@ -308,7 +340,9 @@ def build_scheduler(optimizer, args):
 
     return scheduler, scheduler_info
 
-def bulid_logger(log_file_path):
+def bulid_logger(base_dir):
+    log_file_path = os.path.join(base_dir, "log.txt")
+
     # 创建一个 logger 对象
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)  # 设置最低日志级别
@@ -575,6 +609,7 @@ if __name__ == "__main__":
     parser.add_argument('--resume', default='', type=str, metavar='PATH',
                         help='path to latest checkpoint (default: none)')
     parser.add_argument('--output_dir', type=str, default='output', help="output dir")
+    parser.add_argument('--prefix', type=str, default='', help="output dir")
 
     args = parser.parse_args()
 
@@ -586,9 +621,9 @@ if __name__ == "__main__":
 
     device = torch.device('cuda:{}'.format(args.gpu))
 
-    prepare_path_env(args)
+    exp_base_dir = prepare_path_env(args)
     
-    logger = bulid_logger(args)
+    logger = bulid_logger(exp_base_dir)
 
     print("*************Start building model****************")
     model, model_info = build_model(args)
