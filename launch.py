@@ -23,6 +23,7 @@ from torch.utils.data import Subset
 import sys
 import models
 import datasets
+import trainer
 import logging
 from torchinfo import summary
 from datetime import timedelta
@@ -412,11 +413,15 @@ def validate(val_loader, model, criterion, args):
     return losses.avg, top1.avg, top5.avg
 
 def train_epoch(args, model, train_dataloader, optimizer, criterion, device, epoch, tb_logger):
+    # default meter
     batch_time = AverageMeter('Time', ':6.3f')
     data_time = AverageMeter('Data', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
+
+    # metric meter
     top1 = AverageMeter('Acc@1', ':6.2f')
     top5 = AverageMeter('Acc@5', ':6.2f')
+
     progress = ProgressMeter(
         len(train_dataloader),
         [batch_time, data_time, losses, top1, top5],
@@ -497,6 +502,7 @@ def log():
 def log_setp():
     pass
 
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
@@ -567,61 +573,67 @@ if __name__ == "__main__":
     parser.add_argument('--output_dir', type=str, default='output', help="output dir")
     parser.add_argument('--prefix', type=str, default='', help="output dir")
     parser.add_argument('--extra_note', type=str, default='default', help="")
+    parser.add_argument('--evaluator', type=list, default=['acc'])
 
-    args = parser.parse_args()
 
-    # 设置ddp等参数
-    args = prepare_ddp_args(args)
 
-    # 设置seed等参数
-    args = prepare_seed_env(args)
+    # args = parser.parse_args()
+    config = parser.parse_args()
 
-    device = torch.device('cuda:{}'.format(args.gpu))
+    # # 设置ddp等参数
+    # args = prepare_ddp_args(args)
 
-    exp_base_dir = prepare_path_env(args)
+    # # 设置seed等参数
+    # args = prepare_seed_env(args)
+
+    # device = torch.device('cuda:{}'.format(args.gpu))
+
+    # exp_base_dir = prepare_path_env(args)
     
-    logger, tb_logger = bulid_logger(exp_base_dir)
+    # logger, tb_logger = bulid_logger(exp_base_dir)
 
-    logger.info("**************************Start building model*******************************")
-    model, model_info = build_model(args)
-    logger.info(model_info)
-    model.cuda()
+    # logger.info("**************************Start building model*******************************")
+    # model, model_info = build_model(args)
+    # logger.info(model_info)
+    # model.cuda()
 
-    logger.info("************************Start building dataset*************************")
-    train_dataset, val_dataset, collate_fn, dataset_info = build_dataset(args)
-    logger.info(dataset_info)
+    # logger.info("************************Start building dataset*************************")
+    # train_dataset, val_dataset, collate_fn, dataset_info = build_dataset(args)
+    # logger.info(dataset_info)
 
-    logger.info("************************Start building dataloader**********************")
-    train_dataloader, val_dataloader = build_dataloader(args, train_dataset, val_dataset, collate_fn=collate_fn)
+    # logger.info("************************Start building dataloader**********************")
+    # train_dataloader, val_dataloader = build_dataloader(args, train_dataset, val_dataset, collate_fn=collate_fn)
 
-    logger.info("************************Start building optimizer***********************")
-    optimizer, optimizer_info = build_optimizer(model, args)
-    logger.info(optimizer_info)
+    # logger.info("************************Start building optimizer***********************")
+    # optimizer, optimizer_info = build_optimizer(model, args)
+    # logger.info(optimizer_info)
 
-    logger.info("************************Start building scheduler***********************")
-    scheduler, scheduler_info = build_scheduler(optimizer, args)
-    logger.info(scheduler_info)
+    # logger.info("************************Start building scheduler***********************")
+    # scheduler, scheduler_info = build_scheduler(optimizer, args)
+    # logger.info(scheduler_info)
 
-    logger.info("************************Start building criterion***********************")
-    criterion = build_criterion(args, device)
-    logger.info(criterion)
+    # logger.info("************************Start building criterion***********************")
+    # criterion = build_criterion(args, device)
+    # logger.info(criterion)
 
-    logger.info("================================Begin to Train================================")
-    # criterion = nn.CrossEntropyLoss().to(device)
-    ckpt_save_dir = os.path.join(exp_base_dir, "ckpt")
+    # logger.info("================================Begin to Train================================")
+    # # criterion = nn.CrossEntropyLoss().to(device)
+    # ckpt_save_dir = os.path.join(exp_base_dir, "ckpt")
 
-    train(
-          args=args, 
-          model=model, 
-          train_dataloader=train_dataloader, 
-          val_dataloader=val_dataloader, 
-          optimizer=optimizer, 
-          scheduler=scheduler, 
-          criterion=criterion,
-          save_dir=ckpt_save_dir,
-          tb_logger=tb_logger,
-          )
+    # train(
+    #       args=args, 
+    #       model=model, 
+    #       train_dataloader=train_dataloader, 
+    #       val_dataloader=val_dataloader, 
+    #       optimizer=optimizer, 
+    #       scheduler=scheduler, 
+    #       criterion=criterion,
+    #       save_dir=ckpt_save_dir,
+    #       tb_logger=tb_logger,
+    #       )
 
+    trainer = trainer.BaseTrainer(config=config)
+    trainer.train()
     
     
 
