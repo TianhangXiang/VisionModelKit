@@ -316,7 +316,7 @@ def bulid_evaluator():
     pass
 
 def train(args, model, train_dataloader, val_dataloader, optimizer, scheduler, criterion, save_dir, tb_logger):
-    
+    best_acc1 = 0
     for epoch in range(args.start_epoch, args.epochs):
         # train for one epoch
         train_loss, train_acc1, train_acc5 = train_epoch(args=args, 
@@ -331,7 +331,7 @@ def train(args, model, train_dataloader, val_dataloader, optimizer, scheduler, c
 
         # evaluate on validation set
         valid_loss, valid_acc1, valid_acc5 = validate(val_dataloader, model, criterion, args)
-        tb_logger.add_scalar('valid_loss', valid_loss.item(), epoch)
+        tb_logger.add_scalar('valid_loss', valid_loss, epoch)
         tb_logger.add_scalar('valid_acc1', valid_acc1, epoch)
         tb_logger.add_scalar('valid_acc5', valid_acc5, epoch)
 
@@ -343,7 +343,7 @@ def train(args, model, train_dataloader, val_dataloader, optimizer, scheduler, c
 
         save_checkpoint({
                 'epoch': epoch + 1,
-                'arch': args.arch,
+                'model': args.model,
                 'state_dict': model.state_dict(),
                 'best_acc1': best_acc1,
                 'optimizer' : optimizer.state_dict(),
