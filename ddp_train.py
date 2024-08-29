@@ -136,8 +136,8 @@ if __name__ == "__main__":
 
 
     trainer = trainer.BaseTrainer(config=config)
-    # trainer.train()
-    trainer.val()
+    trainer.train()
+    # trainer.val()
     
     
 

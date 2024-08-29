@@ -97,12 +97,11 @@ class BaseTrainer():
         self.handle_ddp_training()
         
     def build_model(self, config):
-        # model = models.__dict__[config.model]()
-        # if config.pretrained:
-        #     # TODO
-        #     pass
-        model = torchvision.models.resnet50(pretrained=True)
-
+        model = models.__dict__[config.model]()
+        if config.pretrained:
+            # TODO
+            pass
+        # model = torchvision.models.resnet50(pretrained=True)
         return model
     
     def build_dataset(self, config):
