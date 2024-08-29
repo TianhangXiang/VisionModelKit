@@ -17,6 +17,7 @@ import torch.optim
 import torch.utils.data
 import torch.utils.data.distributed
 import torchvision.datasets as datasets
+import torchvision.models
 import torchvision.transforms as transforms
 from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import Subset
@@ -87,6 +88,13 @@ class BaseTrainer():
         
     def build_model(self, config):
         model = models.__dict__[config.model]()
+        if config.pretrained:
+            # TODO
+            pass
+        # # FIXME
+        # # debug for val
+        # import torchvision
+        # model = torchvision.models.resnet50(pretrained=True)
         return model
     
     def build_dataset(self, config):
@@ -266,6 +274,8 @@ class BaseTrainer():
     def val(self, epoch=-1):
         for _, evaluator in self.evaluator.items():
             evaluator.reset()
+        # NOTE: self.model.eval() is IMPORTRANT, or the results will be INCORRECT!!!
+        self.model.eval()
 
         loss_dict, metric_dict = self.val_epoch()
 
@@ -410,7 +420,7 @@ class BaseTrainer():
         return sum([x.nelement() for x in _model.parameters()]), sum([x.nelement() for x in _model.parameters() if x.requires_grad is True])
     
     @torch.no_grad()
-    def val_epoch(self):    
+    def val_epoch(self):
         batch_time = AverageMeter('Time', ':6.3f')
         data_time = AverageMeter('Data', ':6.3f')
         losses = AverageMeter('Loss', ':.4e')
