@@ -245,19 +245,22 @@ class BaseTrainer():
         for epoch in range(self.start_epoch, self.max_epoch):
             # train for one epoch
             self.train_epoch(epoch)
-
+            self.train_log_after_epoch(epoch)
             # val for one epoch
             self.val(epoch)
 
-
     def train_one_epoch(self):
         pass
+
     def train_step(self, batch):
         pass
+
     def train_log_in_epoch(self, log_dict):
         pass
-    def train_log_after_epoch(self, log_dict):
-        pass
+
+    def train_log_after_epoch(self, epoch):
+        current_lr = self.optimizer.param_groups[0]['lr']
+        self.tb_logger.add_scalar('epoch/lr', current_lr, epoch)
 
     @torch.no_grad()
     def val(self, epoch=-1):
@@ -269,12 +272,13 @@ class BaseTrainer():
         self.log_after_val_epoch(loss_dict, metric_dict, epoch)
 
         self.save_after_val_epoch(metric_dict, epoch=epoch)
-
         
     def val_one_epoch():
         pass
+    
     def val_log_in_epoch(self, log_dict):
         pass
+    
     def val_log_after_epoch(self, log_dict):
         pass
 
@@ -337,16 +341,16 @@ class BaseTrainer():
                 loss_val_avg_str = "{:.3f} ({:.3f})".format(losses.val, losses.avg)
                 current_lr = self.optimizer.param_groups[0]['lr']
 
-                time_str = "Epoch: [{} / {}][{} / {}] Batch time: {} Date time: {} ETA: {}".format(epoch, self.max_epoch, i, len(self.train_dataloader), batch_time_val_avg_str, data_time_val_avg_str, eta_str)
+                time_str = "Epoch: [{} / {}][{} / {}] Batch time: {} Data time: {} ETA: {}".format(epoch, self.max_epoch, i, len(self.train_dataloader), batch_time_val_avg_str, data_time_val_avg_str, eta_str)
                 loss_str = "Loss: {} LR: {:.5f}".format(loss_val_avg_str, current_lr)
-                mertic_str = ""
-                for mertic_key, mertic_value in metric_dict.items():
-                    mertic_str += "{}: {:.3f}  ".format(mertic_key, mertic_value)
+                metric_str = ""
+                for mertic_key, metric_value in metric_dict.items():
+                    metric_str += "{}: {:.3f}  ".format(mertic_key, metric_value)
+                    self.tb_logger.add_scalar(f'train/{metric_key}', metric_value, epoch * len(self.train_dataloader) + i)
 
-                self.logger.info(time_str + " " + loss_str + " " + mertic_str)
-
-                if i > 100:
-                    break
+                self.logger.info(time_str + " " + loss_str + " " + metric_str)
+                self.tb_logger.add_scalar("train/loss_val", losses.val, epoch * len(self.train_dataloader) + i)
+                self.tb_logger.add_scalar("train/loss_avg", losses.avg, epoch * len(self.train_dataloader) + i)
 
         return losses.avg, metric_dict
 
@@ -445,7 +449,8 @@ class BaseTrainer():
                 data_time_val_avg_str = "{:.3f} ({:.3f})".format(data_time.val, data_time.avg)
                 loss_val_avg_str = "{:.3f} ({:.3f})".format(losses.val, losses.avg)
 
-                time_str = "Testing: [{} / {}] Batch time: {} Date time: {}".format(i, len(self.val_dataloader), batch_time_val_avg_str, data_time_val_avg_str)
+                time_str = "Testing: [{} / {}] Batch time: {} Data time: {}".format(i, len(self.val_dataloader), batch_time_val_avg_str, data_time_val_avg_str)
+
                 loss_str = "Loss: {}".format(loss_val_avg_str)
                 mertic_str = ""
                 for mertic_key, mertic_value in metric_dict.items():

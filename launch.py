@@ -576,62 +576,7 @@ if __name__ == "__main__":
     parser.add_argument('--evaluator', type=list, default=['acc'])
     parser.add_argument('--recoder_key', type=str, default='Acc@1_avg')
 
-
-
-    # args = parser.parse_args()
     config = parser.parse_args()
-
-    # # 设置ddp等参数
-    # args = prepare_ddp_args(args)
-
-    # # 设置seed等参数
-    # args = prepare_seed_env(args)
-
-    # device = torch.device('cuda:{}'.format(args.gpu))
-
-    # exp_base_dir = prepare_path_env(args)
-    
-    # logger, tb_logger = bulid_logger(exp_base_dir)
-
-    # logger.info("**************************Start building model*******************************")
-    # model, model_info = build_model(args)
-    # logger.info(model_info)
-    # model.cuda()
-
-    # logger.info("************************Start building dataset*************************")
-    # train_dataset, val_dataset, collate_fn, dataset_info = build_dataset(args)
-    # logger.info(dataset_info)
-
-    # logger.info("************************Start building dataloader**********************")
-    # train_dataloader, val_dataloader = build_dataloader(args, train_dataset, val_dataset, collate_fn=collate_fn)
-
-    # logger.info("************************Start building optimizer***********************")
-    # optimizer, optimizer_info = build_optimizer(model, args)
-    # logger.info(optimizer_info)
-
-    # logger.info("************************Start building scheduler***********************")
-    # scheduler, scheduler_info = build_scheduler(optimizer, args)
-    # logger.info(scheduler_info)
-
-    # logger.info("************************Start building criterion***********************")
-    # criterion = build_criterion(args, device)
-    # logger.info(criterion)
-
-    # logger.info("================================Begin to Train================================")
-    # # criterion = nn.CrossEntropyLoss().to(device)
-    # ckpt_save_dir = os.path.join(exp_base_dir, "ckpt")
-
-    # train(
-    #       args=args, 
-    #       model=model, 
-    #       train_dataloader=train_dataloader, 
-    #       val_dataloader=val_dataloader, 
-    #       optimizer=optimizer, 
-    #       scheduler=scheduler, 
-    #       criterion=criterion,
-    #       save_dir=ckpt_save_dir,
-    #       tb_logger=tb_logger,
-    #       )
 
     trainer = trainer.BaseTrainer(config=config)
     trainer.train()
