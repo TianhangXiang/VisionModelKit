@@ -33,15 +33,26 @@ import json
 from utils.utils import AverageMeter, ProgressMeter, Summary
 from torch.utils.tensorboard import SummaryWriter
 from utils.eval import *
+from utils.distribute import *
 
 class BaseTrainer():
     def __init__(self, config) -> None:
+        # ddp args
+        self.is_distributed = False
+        if 'WORLD_SIZE' in os.environ: 
+            self.is_distributed = int(os.environ['WORLD_SIZE']) > 1
+
+        if self.is_distributed:
+            self.world_size = dist.get_world_size()
+            self.rank = dist.get_rank()
+        else:
+            self.world_size = 1
+            self.rank = 0
+
         # prepare_save_dir, setup_logger, backup_file
         self.config = config
         self.start_epoch = config.start_epoch
         self.max_epoch = config.epochs
-        # TODO: support ddp training
-        self.is_distributed = False
         self._init_(config)
 
         self.logger.info('Initializing model...')
@@ -59,8 +70,7 @@ class BaseTrainer():
         self.train_dataloader, self.val_dataloader = self.build_dataloader(config=config, 
                                                                            train_dataset=self.train_dataset, 
                                                                            val_dataset=self.val_dataset, 
-                                                                           collate_fn=collate_fn, 
-                                                                           is_distributed=self.is_distributed
+                                                                           collate_fn=collate_fn,
                                                                            )
         
         self.logger.info('The batch number of train dataloader is {}'.format(len(self.train_dataloader)))
@@ -87,22 +97,20 @@ class BaseTrainer():
         self.handle_ddp_training()
         
     def build_model(self, config):
-        model = models.__dict__[config.model]()
-        if config.pretrained:
-            # TODO
-            pass
-        # # FIXME
-        # # debug for val
-        # import torchvision
-        # model = torchvision.models.resnet50(pretrained=True)
+        # model = models.__dict__[config.model]()
+        # if config.pretrained:
+        #     # TODO
+        #     pass
+        model = torchvision.models.resnet50(pretrained=True)
+
         return model
     
     def build_dataset(self, config):
         train_dataset, val_dataset, collate_fn = datasets.__dict__[config.dataset_name](config)
         return train_dataset, val_dataset, collate_fn
 
-    def build_dataloader(self, config, train_dataset, val_dataset, collate_fn=None, is_distributed=False):
-        if is_distributed:
+    def build_dataloader(self, config, train_dataset, val_dataset, collate_fn=None):
+        if self.is_distributed:
             train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
             val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset, shuffle=False, drop_last=True)
         else:
@@ -247,7 +255,10 @@ class BaseTrainer():
             self.logger.info("Use single card: {} for accelerate".format(device))
         else:
             # TODO: support ddp training
-            pass
+            self.model.to(self.rank)
+            self.model = torch.nn.parallel.DistributedDataParallel(self.model, device_ids=[self.config.local_rank], output_device=self.config.local_rank)
+            device = torch.device(f'cuda:{self.config.local_rank}')
+            self.criterion = self.criterion.to(device)
 
     def train(self):
         for epoch in range(self.start_epoch, self.max_epoch):
@@ -267,8 +278,9 @@ class BaseTrainer():
         pass
 
     def train_log_after_epoch(self, epoch):
-        current_lr = self.optimizer.param_groups[0]['lr']
-        self.tb_logger.add_scalar('epoch/lr', current_lr, epoch)
+        if self.rank == 0:
+            current_lr = self.optimizer.param_groups[0]['lr']
+            self.tb_logger.add_scalar('epoch/lr', current_lr, epoch)
 
     @torch.no_grad()
     def val(self, epoch=-1):
@@ -305,6 +317,10 @@ class BaseTrainer():
         completed_batches = len(self.train_dataloader) * (epoch - 1)
 
         device = next(self.model.parameters()).device
+
+        if self.is_distributed:
+            self.train_dataloader.sampler.set_epoch(epoch)
+
         for i, (images, target) in enumerate(self.train_dataloader):
             # measure data loading time
             data_time.update(time.time() - end)
@@ -326,12 +342,20 @@ class BaseTrainer():
                         metric_key + "_val": metricAvgMeter.val.item(),
                         metric_key + "_avg": metricAvgMeter.avg.item(),
                     })
-            losses.update(loss.item(), batch_size)
 
             # compute gradient and do SGD step
             self.optimizer.zero_grad()
             loss.backward()
+
+            # wait for all the gradient to be calculated
+            torch.cuda.synchronize()
+
             self.optimizer.step()
+
+            if self.is_distributed:
+                loss = reduce_tensor(loss.data, self.world_size)
+
+            losses.update(loss.item(), batch_size)
 
             # measure elapsed time
             batch_time.update(time.time() - end)
@@ -342,10 +366,7 @@ class BaseTrainer():
             eta_seconds = batch_time.avg * remaining_batches
             eta_str = str(timedelta(seconds=int(eta_seconds)))
 
-            if i % self.config.print_freq == 0:
-                # progress.display(i, eta_str)
-                # tb_logger.add_scalar('training loss', running_loss / args.print_freq, epoch * len(train_dataloader) + i)
-                # running_loss = 0.0
+            if i % self.config.print_freq == 0 and ((self.is_distributed and dist.get_rank() == 0) or not self.is_distributed):
                 batch_time_val_avg_str = "{:.3f} ({:.3f})".format(batch_time.val, batch_time.avg)
                 data_time_val_avg_str = "{:.3f} ({:.3f})".format(data_time.val, data_time.avg)
                 loss_val_avg_str = "{:.3f} ({:.3f})".format(losses.val, losses.avg)
@@ -427,6 +448,7 @@ class BaseTrainer():
 
         end = time.time()
         device = next(self.model.parameters()).device
+        global_metric_dict = {}
         for i, (images, target) in enumerate(self.val_dataloader):
             # measure data loading time
             data_time.update(time.time() - end)
@@ -454,7 +476,21 @@ class BaseTrainer():
             batch_time.update(time.time() - end)
             end = time.time()
 
-            if i % self.config.print_freq == 0:
+            if self.is_distributed:
+                # 同步所有 GPU 的损失和指标值
+                loss_tensor = torch.tensor([losses.sum, losses.count], dtype=torch.float32, device=device)
+                dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM)
+                losses.avg = loss_tensor[0].item() / loss_tensor[1].item()
+
+                # 同步每个 metric 的值
+                for metric_key, metric_value in metric_dict.items():
+                    metric_tensor = torch.tensor([metric_value], dtype=torch.float32, device=device)
+                    dist.all_reduce(metric_tensor, op=dist.ReduceOp.SUM)
+                    global_metric_dict[metric_key] = metric_tensor.item() / dist.get_world_size()
+            else:
+                global_metric_dict = metric_dict
+
+            if i % self.config.print_freq == 0 and self.rank==0:
                 batch_time_val_avg_str = "{:.3f} ({:.3f})".format(batch_time.val, batch_time.avg)
                 data_time_val_avg_str = "{:.3f} ({:.3f})".format(data_time.val, data_time.avg)
                 loss_val_avg_str = "{:.3f} ({:.3f})".format(losses.val, losses.avg)
@@ -468,31 +504,33 @@ class BaseTrainer():
 
                 self.logger.info(time_str + " " + loss_str + " " + mertic_str)
 
-        return {"ce_loss": losses.avg}, metric_dict
+        return {"ce_loss": losses.avg}, global_metric_dict
     
     def log_after_val_epoch(self, loss_dict, metric_dict, epoch=-1):
-        self.logger.info("******************* Finish validate for epoch {} *******************".format(epoch))
-        for loss_key, loss_val in loss_dict.items():
-            self.logger.info("The validate loss {} is: {:.4f}".format(loss_key, loss_val))
+        if self.rank == 0:
+            self.logger.info("******************* Finish validate for epoch {} *******************".format(epoch))
+            for loss_key, loss_val in loss_dict.items():
+                self.logger.info("The validate loss {} is: {:.4f}".format(loss_key, loss_val))
 
-        for metric_key, metric_val in metric_dict.items():
-            self.logger.info("The metric {} is: {:.4f}".format(metric_key, metric_val))
+            for metric_key, metric_val in metric_dict.items():
+                self.logger.info("The metric {} is: {:.4f}".format(metric_key, metric_val))
     
     def save_after_val_epoch(self, metric_dict, epoch=-1):
-        recoder_key = self.recoder_key
-        if metric_dict[self.recoder_key] > self.recoder[self.recoder_key]:
-            self.recoder[self.recoder_key] = metric_dict[self.recoder_key]
-            save_dir = os.path.join(self.output_dir, "ckpt")
-            os.makedirs(save_dir, exist_ok=True)
-            self.logger.info("************ Get best result {}: {:.4f} in epoch {} ************".format(self.recoder_key, metric_dict[self.recoder_key], epoch))
-            self.save_checkpoint({
-                'epoch': epoch + 1,
-                'model': self.config.model,
-                'state_dict': self.model.state_dict(),
-                recoder_key: self.recoder[self.recoder_key],
-                'optimizer' : self.optimizer.state_dict(),
-                'scheduler' : self.scheduler.state_dict()
-            }, is_best=True, save_dir=save_dir)
+        if self.rank == 0:
+            recoder_key = self.recoder_key
+            if metric_dict[self.recoder_key] > self.recoder[self.recoder_key]:
+                self.recoder[self.recoder_key] = metric_dict[self.recoder_key]
+                save_dir = os.path.join(self.output_dir, "ckpt")
+                os.makedirs(save_dir, exist_ok=True)
+                self.logger.info("************ Get best result {}: {:.4f} in epoch {} ************".format(self.recoder_key, metric_dict[self.recoder_key], epoch))
+                self.save_checkpoint({
+                    'epoch': epoch + 1,
+                    'model': self.config.model,
+                    'state_dict': self.model.state_dict(),
+                    recoder_key: self.recoder[self.recoder_key],
+                    'optimizer' : self.optimizer.state_dict(),
+                    'scheduler' : self.scheduler.state_dict()
+                }, is_best=True, save_dir=save_dir)
     
     def save_checkpoint(self, state, is_best, save_dir='output', filename='checkpoint.pth.tar'):
         os.makedirs(save_dir, exist_ok=True)
