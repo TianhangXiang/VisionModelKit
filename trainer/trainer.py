@@ -224,6 +224,12 @@ class BaseTrainer():
         self.logger, self.tb_logger = self.bulid_logger(output_dir)
         self.logger.info("========> The base dir is: \n {} ".format(self.output_dir))
         self.logger.info("========> Use the follow config: \n {} ".format(config))
+
+        # setup recoder
+        self.recoder_key = config.recoder_key
+        self.recoder = {
+                        self.recoder_key: 0.0,
+                        }
     
     def handle_ddp_training(self):
         if not self.is_distributed:
@@ -239,12 +245,9 @@ class BaseTrainer():
         for epoch in range(self.start_epoch, self.max_epoch):
             # train for one epoch
             self.train_epoch(epoch)
-            for evaluator in self.evaluator:
-                evaluator.reset()
 
-            val_mertic_dict = self.val()
-            best_mertic_key = "Acc@1"
-
+            # val for one epoch
+            self.val(epoch)
 
 
     def train_one_epoch(self):
@@ -257,30 +260,16 @@ class BaseTrainer():
         pass
 
     @torch.no_grad()
-    def val(self):
+    def val(self, epoch=-1):
+        for _, evaluator in self.evaluator.items():
+            evaluator.reset()
 
-        for i, (images, target) in enumerate(self.val_dataloader):
+        loss_dict, metric_dict = self.val_epoch()
 
-            # move data to the same device as model
-            images = images.to(device, non_blocking=True)
-            target = target.to(device, non_blocking=True)
+        self.log_after_val_epoch(loss_dict, metric_dict, epoch)
 
-            # compute output
-            output = model(images)
-            loss = criterion(output, target)
+        self.save_after_val_epoch(metric_dict, epoch=epoch)
 
-            # measure accuracy and record loss
-            acc1, acc5 = accuracy(output, target, topk=(1, 5))
-            losses.update(loss.item(), images.size(0))
-            top1.update(acc1[0], images.size(0))
-            top5.update(acc5[0], images.size(0))
-
-            # measure elapsed time
-            batch_time.update(time.time() - end)
-            end = time.time()
-
-            if i % args.print_freq == 0:
-                progress.display(i + 1)
         
     def val_one_epoch():
         pass
@@ -355,7 +344,9 @@ class BaseTrainer():
                     mertic_str += "{}: {:.3f}  ".format(mertic_key, mertic_value)
 
                 self.logger.info(time_str + " " + loss_str + " " + mertic_str)
-                break
+
+                if i > 100:
+                    break
 
         return losses.avg, metric_dict
 
@@ -415,14 +406,14 @@ class BaseTrainer():
         return sum([x.nelement() for x in _model.parameters()]), sum([x.nelement() for x in _model.parameters() if x.requires_grad is True])
     
     @torch.no_grad()
-    def val(self):
+    def val_epoch(self):    
         batch_time = AverageMeter('Time', ':6.3f')
         data_time = AverageMeter('Data', ':6.3f')
         losses = AverageMeter('Loss', ':.4e')
 
         end = time.time()
         device = next(self.model.parameters()).device
-        for i, (images, target) in enumerate(self.train_dataloader):
+        for i, (images, target) in enumerate(self.val_dataloader):
             # measure data loading time
             data_time.update(time.time() - end)
 
@@ -436,11 +427,11 @@ class BaseTrainer():
 
             batch_size = images.shape[0]
             metric_dict = {}
-            for evaluator_name, evaluator in self.evaluator.items():
+            for evaluator_name_, evaluator in self.evaluator.items():
                 evaluator.update(output, target, batch_size)
                 for metric_key, metricAvgMeter in evaluator.metrics.items():
                     metric_dict.update({
-                        metric_key + "_val": metricAvgMeter.val.item(),
+                        # metric_key + "_val": metricAvgMeter.val.item(),
                         metric_key + "_avg": metricAvgMeter.avg.item(),
                     })
             losses.update(loss.item(), batch_size)
@@ -454,12 +445,43 @@ class BaseTrainer():
                 data_time_val_avg_str = "{:.3f} ({:.3f})".format(data_time.val, data_time.avg)
                 loss_val_avg_str = "{:.3f} ({:.3f})".format(losses.val, losses.avg)
 
-    
+                time_str = "Testing: [{} / {}] Batch time: {} Date time: {}".format(i, len(self.val_dataloader), batch_time_val_avg_str, data_time_val_avg_str)
                 loss_str = "Loss: {}".format(loss_val_avg_str)
                 mertic_str = ""
                 for mertic_key, mertic_value in metric_dict.items():
                     mertic_str += "{}: {:.3f}  ".format(mertic_key, mertic_value)
 
-                self.logger.info(loss_str + " " + mertic_str)
+                self.logger.info(time_str + " " + loss_str + " " + mertic_str)
 
-        return losses.avg, metric_dict
+        return {"ce_loss": losses.avg}, metric_dict
+    
+    def log_after_val_epoch(self, loss_dict, metric_dict, epoch=-1):
+        self.logger.info("******************* Finish validate for epoch {} *******************".format(epoch))
+        for loss_key, loss_val in loss_dict.items():
+            self.logger.info("The validate loss {} is: {:.4f}".format(loss_key, loss_val))
+
+        for metric_key, metric_val in metric_dict.items():
+            self.logger.info("The metric {} is: {:.4f}".format(metric_key, metric_val))
+    
+    def save_after_val_epoch(self, metric_dict, epoch=-1):
+        recoder_key = self.recoder_key
+        if metric_dict[self.recoder_key] > self.recoder[self.recoder_key]:
+            self.recoder[self.recoder_key] = metric_dict[self.recoder_key]
+            save_dir = os.path.join(self.output_dir, "ckpt")
+            os.makedirs(save_dir, exist_ok=True)
+            self.logger.info("************ Get best result {}: {:.4f} in epoch {} ************".format(self.recoder_key, metric_dict[self.recoder_key], epoch))
+            self.save_checkpoint({
+                'epoch': epoch + 1,
+                'model': self.config.model,
+                'state_dict': self.model.state_dict(),
+                recoder_key: self.recoder[self.recoder_key],
+                'optimizer' : self.optimizer.state_dict(),
+                'scheduler' : self.scheduler.state_dict()
+            }, is_best=True, save_dir=save_dir)
+    
+    def save_checkpoint(self, state, is_best, save_dir='output', filename='checkpoint.pth.tar'):
+        os.makedirs(save_dir, exist_ok=True)
+        save_path = os.path.join(save_dir, filename)
+        torch.save(state, save_path)
+        if is_best:
+            shutil.copyfile(save_path, os.path.join(save_dir, 'model_best.pth.tar'))

@@ -574,6 +574,7 @@ if __name__ == "__main__":
     parser.add_argument('--prefix', type=str, default='', help="output dir")
     parser.add_argument('--extra_note', type=str, default='default', help="")
     parser.add_argument('--evaluator', type=list, default=['acc'])
+    parser.add_argument('--recoder_key', type=str, default='Acc@1_avg')
 
 
 
