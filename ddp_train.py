@@ -1,36 +1,13 @@
-import argparse
 import os
-import random
-import shutil
-import time
-import warnings
-from enum import Enum
-
+import argparse
 import torch
-import torch.backends.cudnn as cudnn
 import torch.distributed as dist
-import torch.multiprocessing as mp
-import torch.nn as nn
 import torch.nn.parallel
 import torch.optim
 import torch.utils.data
 import torch.utils.data.distributed
-import torchvision.datasets as datasets
-import torchvision.transforms as transforms
-from torch.optim.lr_scheduler import StepLR
-from torch.utils.data import Subset
 
-import sys
-import models
-import datasets
 import trainer
-import logging
-from torchinfo import summary
-from datetime import timedelta
-from datetime import datetime
-import json
-from utils.utils import AverageMeter, ProgressMeter, Summary
-from torch.utils.tensorboard import SummaryWriter
 
 def setup(local_rank, local_world_size):
     # initialize the process group

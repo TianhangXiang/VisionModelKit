@@ -102,6 +102,8 @@ class BaseTrainer():
             # TODO
             pass
         # model = torchvision.models.resnet50(pretrained=True)
+        # from torchinfo import summary
+        # model_info = summary(model, input_size=(1, 3, 224, 224), col_names=["input_size", "output_size"])
         return model
     
     def build_dataset(self, config):
@@ -207,9 +209,6 @@ class BaseTrainer():
             raise ValueError(f"unspported loss: {config.criterion}")
         return criterion
     
-    def bulid_logger(self, config):
-        pass
-
     def _init_(self, config):
         # prepare save dir
         model_name = config.model
@@ -228,12 +227,13 @@ class BaseTrainer():
         self.output_dir = output_dir
 
         # backup code
-        backup_dir = os.path.join(output_dir, "backup")
-        os.makedirs(backup_dir, exist_ok=True)
-        self._backup_files(os.getcwd(), backup_dir)
-        # backup config 
-        with open(os.path.join(output_dir, 'config.json'), 'w') as json_file:
-            json.dump(vars(config), json_file, indent=4)
+        if self.rank == 0:
+            backup_dir = os.path.join(output_dir, "backup")
+            os.makedirs(backup_dir, exist_ok=True)
+            self._backup_files(os.getcwd(), backup_dir)
+            # backup config 
+            with open(os.path.join(output_dir, 'config.json'), 'w') as json_file:
+                json.dump(vars(config), json_file, indent=4)
 
         # setup logger
         self.logger, self.tb_logger = self.bulid_logger(output_dir)
@@ -253,7 +253,6 @@ class BaseTrainer():
             self.criterion.to(device)
             self.logger.info("Use single card: {} for accelerate".format(device))
         else:
-            # TODO: support ddp training
             self.model.to(self.rank)
             self.model = torch.nn.parallel.DistributedDataParallel(self.model, device_ids=[self.config.local_rank], output_device=self.config.local_rank)
             device = torch.device(f'cuda:{self.config.local_rank}')
@@ -263,6 +262,7 @@ class BaseTrainer():
         for epoch in range(self.start_epoch, self.max_epoch):
             # train for one epoch
             self.train_epoch(epoch)
+            self.scheduler.step()
             self.train_log_after_epoch(epoch)
             # val for one epoch
             self.val(epoch)
@@ -381,6 +381,7 @@ class BaseTrainer():
                 self.logger.info(time_str + " " + loss_str + " " + metric_str)
                 self.tb_logger.add_scalar("train/loss_val", losses.val, epoch * len(self.train_dataloader) + i)
                 self.tb_logger.add_scalar("train/loss_avg", losses.avg, epoch * len(self.train_dataloader) + i)
+                self.tb_logger.add_scalar("train/epoch", epoch, epoch * len(self.train_dataloader) + i)
 
         return losses.avg, metric_dict
 
@@ -431,9 +432,10 @@ class BaseTrainer():
         # 将处理器添加到 logger 对象
         logger.addHandler(file_handler)
         logger.addHandler(console_handler)
-
-        tb_logger = SummaryWriter(log_dir=os.path.join(base_dir))
-
+        if self.rank == 0:
+            tb_logger = SummaryWriter(log_dir=os.path.join(base_dir))
+        else:
+            tb_logger = None
         return logger, tb_logger
 
     def count_param(self, _model):
@@ -510,9 +512,11 @@ class BaseTrainer():
             self.logger.info("******************* Finish validate for epoch {} *******************".format(epoch))
             for loss_key, loss_val in loss_dict.items():
                 self.logger.info("The validate loss {} is: {:.4f}".format(loss_key, loss_val))
+                self.tb_logger.add_scalar('eval/val_loss', loss_val, epoch)
 
             for metric_key, metric_val in metric_dict.items():
                 self.logger.info("The metric {} is: {:.4f}".format(metric_key, metric_val))
+                self.tb_logger.add_scalar('eval/{}'.format(metric_key), metric_val, epoch)
     
     def save_after_val_epoch(self, metric_dict, epoch=-1):
         if self.rank == 0:
@@ -537,3 +541,21 @@ class BaseTrainer():
         torch.save(state, save_path)
         if is_best:
             shutil.copyfile(save_path, os.path.join(save_dir, 'model_best.pth.tar'))
+    
+    def train_step(self, batch):
+        pass
+    
+    def train_log_epoch(self, batch):
+        pass
+
+    def train_log_step(self, batch):
+        pass
+
+    def val_step(self, batch):
+        pass
+
+    def val_log_step(self, batch):
+        pass
+
+    def val_log_epoch(self, batch):
+        pass
